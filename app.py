@@ -3,141 +3,139 @@ import logging
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-from database import SessionLocal, User, QuestionLog
-from content import SESSION_CONTENT
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    print("❌ BOT_TOKEN در فایل .env تنظیم نشده!")
+    print("❌ BOT_TOKEN تنظیم نشده!")
     exit(1)
 
-# =============== توابع کمکی ===============
-def get_user(telegram_id, username, first_name, last_name):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=telegram_id).first()
-    if not user:
-        user = User(
-            telegram_id=telegram_id,
-            username=username,
-            first_name=first_name,
-            last_name=last_name,
-            current_session="SA01_WELCOME"
-        )
-        db.add(user)
-        db.commit()
-    db.close()
-    return user
-
-def update_user_progress(telegram_id, new_node, xp_gained=0):
-    db = SessionLocal()
-    user = db.query(User).filter_by(telegram_id=telegram_id).first()
-    if user:
-        user.current_session = new_node
-        user.total_xp += xp_gained
-        db.commit()
-    db.close()
-
-def get_session_code_from_node(node_id):
-    return node_id[:4] if node_id and len(node_id) >= 4 else None
-
-# =============== ارسال پیام ===============
-async def send_node(update: Update, context: ContextTypes.DEFAULT_TYPE, node_id: str):
-    user = update.effective_user
-    db_user = get_user(user.id, user.username, user.first_name, user.last_name)
-    
-    session_code = get_session_code_from_node(node_id)
-    if not session_code:
-        await update.callback_query.edit_message_text("❌ شناسه‌ی جلسه نامعتبر است.")
-        return
-    
-    content = SESSION_CONTENT.get(session_code, {}).get("nodes", {}).get(node_id)
-    if not content:
-        await update.callback_query.edit_message_text("❌ محتوا یافت نشد.")
-        return
-    
-    text = content.get("text", "")
-    buttons = content.get("buttons", [])
-    
-    keyboard = []
-    for btn in buttons:
-        keyboard.append([InlineKeyboardButton(btn["text"], callback_data=btn["callback"])])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    update_user_progress(user.id, node_id)
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode="HTML")
-    else:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
-
-# =============== شروع ===============
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    get_user(user.id, user.username, user.first_name, user.last_name)
-    
-    text = """
+# =============== محتوای دوره ===============
+CONTENT = {
+    "start": """
 🧠 <b>دوره‌ی آگاهی موقعیتی</b>
 
-به بات آموزشی Situational Awareness خوش آمدی.
+به بات آموزشی خوش آمدی.
 
-در این دوره ۱۲ جلسه‌ی آموزشی را پشت سر می‌گذاری:
-👁️ مشاهده • 🧭 اسکن محیط • 🧠 آمادگی ذهنی • 🔎 تشخیص ناهنجاری • 📊 تشخیص تهدید • 📏 مدیریت فاصله • 🚪 موقعیت‌یابی • 🗣️ کاهش تنش • 🧠 OODA Loop • 🎯 سناریوهای ترکیبی • 🏆 آزمون نهایی
+این دوره شامل ۱۲ جلسه است:
+• Situational Awareness
+• Observation
+• Mental Readiness
+• Environmental Scanning
+• Baseline & Anomaly
+• Threat Recognition
+• Proxemics
+• Positioning & Exit Routes
+• De-escalation
+• OODA Loop
+• Integrated Scenarios
+• Final Assessment
 
 برای شروع، دکمه‌ی زیر را بزن.
+""",
+    "lesson1": """
+🛡️ <b>جلسه ۱ — آگاهی موقعیتی</b>
+
+<i>Situational Awareness</i>
+
+اولین مهارتی که باید یاد بگیری، توانایی «دیدن» نیست؛ بلکه توانایی درک محیط است.
+
+در این جلسه یاد می‌گیری:
+• Situational Awareness چیست؟
+• چرا دیدن با مشاهده کردن فرق دارد؟
+• چرا هر رفتار غیرعادی الزاماً تهدید نیست؟
+
+<b>آماده‌ای؟</b>
+""",
+    "quiz1": """
+🧪 <b>تمرین</b>
+
+کدام گزینه یک <b>Observation</b> است؟
+
+A) این فرد خطرناک است.
+B) این فرد چند بار به سمت ورودی نگاه کرد.
+C) او احتمالاً قصد حمله دارد.
+D) رفتار او مشکوک است.
+""",
+    "feedback_correct": """
+✅ درست است!
+
+«چند بار به سمت ورودی نگاه کرد» چیزی است که مستقیماً مشاهده شده است.
+گزینه‌های دیگر وارد مرحله تفسیر یا قضاوت شده‌اند.
+
+<b>+20 XP</b>
+""",
+    "feedback_wrong": """
+❌ پاسخ صحیح: <b>B</b>
+
+«چند بار به سمت ورودی نگاه کرد» یک Observation خالص است.
+گزینه‌های دیگر تفسیر یا قضاوت هستند.
+
+<b>دوباره امتحان کن!</b>
 """
-    keyboard = [[InlineKeyboardButton("▶️ شروع دوره", callback_data="SA01_WELCOME")]]
+}
+
+# =============== پاسخ‌های صحیح ===============
+QUIZ_ANSWERS = {
+    "quiz1": "B"
+}
+
+# =============== توابع ===============
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("▶️ شروع دوره", callback_data="lesson1")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
+    await update.message.reply_text(CONTENT["start"], reply_markup=reply_markup, parse_mode="HTML")
 
-# =============== نمایش پیشرفت ===============
-async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    db_user = get_user(user.id, user.username, user.first_name, user.last_name)
-    
-    completed = len(db_user.completed_sessions) if db_user.completed_sessions else 0
-    text = f"""
-📊 <b>گزارش پیشرفت</b>
-
-👤 {db_user.first_name}
-🧠 XP: {db_user.total_xp}
-📚 جلسات تکمیل‌شده: {completed}/12
-
-✅ پاسخ‌های درست: {db_user.correct_answers}
-❌ پاسخ‌های نادرست: {db_user.wrong_answers}
-"""
-    keyboard = [[InlineKeyboardButton("🔄 ادامه دوره", callback_data=db_user.current_session)]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
-
-# =============== پردازش دکمه‌ها ===============
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     
-    if data == "PROFILE":
-        await progress(update, context)
-        return
-    elif data == "GUIDE":
-        await query.edit_message_text("📚 راهنمای دوره: ...")
-        return
-    elif data.startswith("SA"):
-        await send_node(update, context, data)
-    else:
-        await query.edit_message_text("❌ دکمه نامعتبر.")
+    if data == "lesson1":
+        keyboard = [[InlineKeyboardButton("🧪 تمرین", callback_data="quiz1")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(CONTENT["lesson1"], reply_markup=reply_markup, parse_mode="HTML")
+    
+    elif data == "quiz1":
+        # دکمه‌های گزینه‌ها
+        keyboard = [
+            [InlineKeyboardButton("A", callback_data="quiz1_A")],
+            [InlineKeyboardButton("B", callback_data="quiz1_B")],
+            [InlineKeyboardButton("C", callback_data="quiz1_C")],
+            [InlineKeyboardButton("D", callback_data="quiz1_D")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(CONTENT["quiz1"], reply_markup=reply_markup, parse_mode="HTML")
+    
+    elif data.startswith("quiz1_"):
+        # استخراج پاسخ انتخاب‌شده
+        selected = data.split("_")[1]  # A, B, C, D
+        correct = QUIZ_ANSWERS["quiz1"]
+        
+        if selected == correct:
+            feedback = CONTENT["feedback_correct"]
+        else:
+            feedback = CONTENT["feedback_wrong"]
+        
+        keyboard = [[InlineKeyboardButton("📚 ادامه دوره", callback_data="lesson2")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(feedback, reply_markup=reply_markup, parse_mode="HTML")
+    
+    elif data == "lesson2":
+        await query.edit_message_text("🎉 جلسه ۲ به زودی اضافه می‌شود!")
 
 # =============== اصلی ===============
 def main():
-    # پروکسی SOCKS5 (از mtproto2socks روی پورت 1080)
+    # تنظیم تایم‌اوت برای جلوگیری از قطعی
     app = (ApplicationBuilder()
            .token(BOT_TOKEN)
+           .read_timeout(60)
+           .get_updates_read_timeout(60)
            .build())
     
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("progress", progress))
     app.add_handler(CallbackQueryHandler(handle_callback))
     
     print("🤖 بات راه‌اندازی شد... منتظر پیام‌ها هستم.")
