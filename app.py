@@ -134,8 +134,6 @@ def main():
     # پروکسی SOCKS5 (از mtproto2socks روی پورت 1080)
     app = (ApplicationBuilder()
            .token(BOT_TOKEN)
-           .proxy("socks5://127.0.0.1:1080")
-           .get_updates_proxy("socks5://127.0.0.1:1080")
            .build())
     
     app.add_handler(CommandHandler("start", start))
